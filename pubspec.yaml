@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  sqflite: ^2.3.0        # 로컬 DB 엔진
+  path: ^1.8.3           # DB 경로 설정 도구  flutter:
 
 
   # The following adds the Cupertino Icons font to your application.

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 // 프로젝트명/파일명 순서입니다.
 import 'package:planner_20260223/models/todo_model.dart';
+import 'package:planner_20260223/db_helper.dart';
 
 void main() => runApp(MaterialApp(
   home: PlannerApp(),
@@ -13,91 +14,181 @@ class PlannerApp extends StatefulWidget {
 }
 
 class _PlannerAppState extends State<PlannerApp> {
+  final DBHelper _dbHelper = DBHelper();
   List<Todo> myTasks = [];
+  DateTime _selectedDate = DateTime.now(); // 현재 선택된 날짜
 
-  // [로직 1] 그룹 내 순번을 1, 2, 3... 빈틈없이 재정렬하는 함수
-  void _reorderGroup(String groupName) {
-    List<Todo> groupItems = myTasks.where((t) => t.group == groupName).toList();
-    groupItems.sort((a, b) => a.order.compareTo(b.order));
-    for (int i = 0; i < groupItems.length; i++) {
-      groupItems[i].order = i + 1;
+  @override
+  void initState() {
+    super.initState();
+    _refreshTasks(); // 앱 시작 시 DB에서 데이터 로드
+  }
+
+  void _deleteTask(Todo task) async {
+    // 1. DB에서 데이터 삭제
+    await _dbHelper.deleteTodo(task.id);
+
+    // 2. 화면 갱신 (리스트에서 제거됨)
+    _refreshTasks();
+
+    // 3. 하단 알림 메시지 (선택 사항)
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('일정이 삭제되었습니다.'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
+  // DB에서 현재 선택된 날짜의 데이터를 가져와 화면 갱신
+  void _refreshTasks() async {
+    // 1. DB에서 현재 날짜의 데이터를 등록순(id ASC)으로 가져옴
+    final data = await _dbHelper.getTodosByDate(_selectedDate);
+
+    // // 2. 그룹별 카운터로 번호 중복 및 누락 방지 (날짜 독립성 보장)
+    // int countA = 0;
+    // int countB = 0;
+    //
+    // for (var t in data) {
+    //   if (t.group == 'A') {
+    //     countA++;
+    //     t.order = countA;
+    //   } else {
+    //     countB++;
+    //     t.order = countB;
+    //   }
+    //   // 계산된 정확한 순번 변수를 DB에 업데이트
+    //   await _dbHelper.updateTodo(t);
+    // }
+
+    setState(() {
+      myTasks = data;
+    });
+  }
+
+  // [로직] 클릭 시 숫자 내림 (순위 상승) 및 DB 업데이트
+  void _incrementOrder(Todo task) async {
+    // 1. 현재 날짜, 현재 그룹 내의 아이템들만 추출
+    List<Todo> groupItems = myTasks.where((t) => t.group == task.group).toList();
+    int currentOrder = task.order;
+    int maxOrder = groupItems.length;
+
+    if (currentOrder <= 1) {
+      // 1번 클릭 시 해당 그룹의 마지막 순번으로 보내고 나머지는 하나씩 당김
+      for (var t in groupItems) {
+        if (t.id == task.id) {
+          t.order = maxOrder;
+        } else {
+          t.order = t.order - 1;
+        }
+        await _dbHelper.updateTodo(t);
+      }
+    } else {
+      // 2. 내 앞 순번(currentOrder - 1)을 가진 항목을 정확히 찾아 서로의 숫자만 교환
+      try {
+        var prevTask = groupItems.firstWhere((t) => t.order == currentOrder - 1);
+
+        int temp = task.order;
+        task.order = prevTask.order;
+        prevTask.order = temp;
+
+        await _dbHelper.updateTodo(task);
+        await _dbHelper.updateTodo(prevTask);
+      } catch (e) {
+        print("교환 대상 찾기 실패: $e");
+      }
+    }
+
+    // 3. 화면 갱신 (이제 _refreshTasks가 번호를 덮어쓰지 않으므로 바뀐 숫자가 보입니다)
+    _refreshTasks();
+  }
+  //
+  // // [로직] 그룹 변경 및 DB 업데이트
+  // void _toggleGroup(Todo task) async {
+  //   String oldGroup = task.group;
+  //   task.group = (oldGroup == 'A') ? 'B' : 'A';
+  //
+  //   // 새 그룹의 마지막 번호 부여
+  //   int newMaxOrder = myTasks.where((t) => t.group == task.group).length;
+  //   task.order = newMaxOrder + 1;
+  //
+  //   await _dbHelper.updateTodo(task);
+  //   _refreshTasks();
+  // }
+
+// [로직] 그룹 변경: 위치(ID)는 유지하고 그룹 변수와 순번만 바꿈
+// [날짜 이동] 날짜 선택기 실행 및 독립성 유지
+  void _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+    );
+    if (picked != null && picked != _selectedDate) {
+      setState(() {
+        _selectedDate = picked;
+      });
+      _refreshTasks(); // 날짜가 바뀌면 해당 날짜의 독립된 데이터를 불러옴
     }
   }
 
-  // [수정된 로직] 클릭 시 위치는 고정하고 '숫자'만 순환 교환
-  // [로직 수정] 클릭 시 숫자를 하나 낮춤 (순위 상승). 1번에서 클릭하면 최하위로.
-  void _incrementOrder(Todo task) {
-    setState(() {
-      int currentOrder = task.order;
-      int maxOrderInGroup = myTasks.where((t) => t.group == task.group).length;
+  // [로직] 그룹 변경: 양쪽 그룹의 순번 연쇄 업데이트 (날짜 독립성 포함)
+  void _toggleGroup(Todo task) async {
+    String oldGroup = task.group;
+    String targetGroup = (oldGroup == 'A') ? 'B' : 'A';
 
-      if (currentOrder <= 1) {
-        // 현재 1번인데 클릭했다면 -> 가장 마지막 번호로 이동
-        // 그리고 2번부터 마지막 번호였던 일정들은 모두 한 칸씩 위로(-1) 당겨짐
-        for (var t in myTasks.where((t) => t.group == task.group)) {
-          if (t == task) {
-            t.order = maxOrderInGroup;
-          } else {
-            t.order--;
-          }
-        }
-      } else {
-        // 현재 번호보다 하나 앞선 번호(currentOrder - 1)를 가진 할 일을 찾아서 서로 교환
-        var prevTask = myTasks.firstWhere(
-                (t) => t.group == task.group && t.order == currentOrder - 1
-        );
-        prevTask.order = currentOrder; // 상대방은 내 번호로 내려감
-        task.order = currentOrder - 1; // 나는 앞 번호로 올라감
-      }
-    });
+    // 1. 그룹 변수 변경
+    task.group = targetGroup;
+
+    // 2. 나가는 그룹(oldGroup) 순서 재정렬 (빈자리 메우기)
+    List<Todo> oldGroupItems = myTasks.where((t) => t.group == oldGroup && t.id != task.id).toList();
+    for (int i = 0; i < oldGroupItems.length; i++) {
+      oldGroupItems[i].order = i + 1;
+      await _dbHelper.updateTodo(oldGroupItems[i]);
+    }
+
+    // 3. 들어가는 그룹(targetGroup) 순서 재정렬 (마지막에 추가)
+    List<Todo> newGroupItems = myTasks.where((t) => t.group == targetGroup).toList();
+    for (int i = 0; i < newGroupItems.length; i++) {
+      newGroupItems[i].order = i + 1;
+      await _dbHelper.updateTodo(newGroupItems[i]);
+    }
+
+    // 4. 모든 변경사항 반영 후 화면 갱신
+    _refreshTasks();
   }
 
-  // [로직 3] A/B 그룹 토글
-  void _toggleGroup(Todo task) {
-    setState(() {
-      String oldGroup = task.group;
-      task.group = (oldGroup == 'A') ? 'B' : 'A';
 
-      // 새 그룹의 맨 마지막 순번 부여
-      int newMaxOrder = myTasks.where((t) => t.group == task.group).length;
-      task.order = newMaxOrder + 1;
-
-      _reorderGroup(oldGroup);
-      _reorderGroup(task.group);
-    });
-  }
-
-  // [로직 4] 신규 일정 추가 다이얼로그 (자동 번호 부여 포함)
+  // [추가] 새 일정 등록
   void _showAddDialog() {
     final titleController = TextEditingController();
-
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('새 일정 등록'),
-        content: TextField(
-          controller: titleController,
-          decoration: InputDecoration(labelText: '할 일을 입력하세요'),
-          autofocus: true,
-        ),
+        content: TextField(controller: titleController, autofocus: true),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: Text('취소')),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (titleController.text.isEmpty) return;
+// [수정] 현재 선택된 날짜의 A그룹 개수만 파악
+              int nextOrder = myTasks.where((t) =>
+              t.group == 'A' &&
+                  t.date.year == _selectedDate.year &&
+                  t.date.month == _selectedDate.month &&
+                  t.date.day == _selectedDate.day
+              ).length + 1;
 
-              setState(() {
-                // A그룹의 현재 할 일 개수를 파악하여 다음 번호(order) 자동 부여
-                int nextOrder = myTasks.where((t) => t.group == 'A').length + 1;
-
-                myTasks.add(Todo(
-                  id: DateTime.now().toString(),
-                  title: titleController.text,
-                  group: 'A', // 기본 그룹 A
-                  order: nextOrder, // 자동 번호 부여
-                  date: DateTime.now(),
-                ));
-              });
+              await _dbHelper.insertTodo(Todo(
+                id: DateTime.now().toString(),
+                title: titleController.text,
+                date: _selectedDate,
+                group: 'A',
+                order: nextOrder,
+              ));
+              _refreshTasks();
               Navigator.pop(ctx);
             },
             child: Text('등록'),
@@ -111,71 +202,93 @@ class _PlannerAppState extends State<PlannerApp> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('SIMPLOCK 스마트 플래너'),
+        title: GestureDetector(
+          onTap: () => _selectDate(context),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text("${_selectedDate.year}-${_selectedDate.month}-${_selectedDate.day} ▼ "),
+            ],
+          ),
+        ),
         backgroundColor: Colors.indigo,
       ),
       body: Column(
         children: [
-          // --- [헤더 영역 추가] ---
-          Container(
-            padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            color: Colors.grey[100],
-            child: Row(
-              children: [
-                SizedBox(width: 38, child: Center(child: Text('중요도', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)))),
-                SizedBox(width: 5),
-                SizedBox(width: 38, child: Center(child: Text('순위', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)))),
-                SizedBox(width: 15),
-                Expanded(child: Text('할일', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-                SizedBox(width: 40, child: Center(child: Text('체크', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)))),
-              ],
-            ),
-          ),
-          Divider(height: 1), // 헤더와 리스트 구분선
-
-          // --- [리스트 영역] ---
+          _buildHeader(),
           Expanded(
             child: ListView.builder(
               itemCount: myTasks.length,
               itemBuilder: (context, index) {
                 final task = myTasks[index];
-                return Container(
-                  decoration: BoxDecoration(
-                    border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+
+                return Dismissible(
+                  key: Key(task.id), // 각 일정의 고유 ID를 키로 사용합니다.
+                  direction: DismissDirection.endToStart, // 오른쪽에서 왼쪽으로 밀 때만 작동합니다.
+                  background: Container(
+                    color: Colors.red,
+                    alignment: Alignment.centerRight,
+                    padding: EdgeInsets.only(right: 20),
+                    child: Icon(Icons.delete, color: Colors.white),
                   ),
+                  // [추가] 삭제 전 확인 팝업창
+                  confirmDismiss: (direction) async {
+                    return await showDialog(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: Text('삭제 확인'),
+                        content: Text('이 일정을 삭제하시겠습니까?'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, false), // 취소
+                            child: Text('취소'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx, true), // 삭제 확정
+                            child: Text('삭제', style: TextStyle(color: Colors.red)),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                  // [추가] 삭제 확정 시 실행될 로직
+                  onDismissed: (direction) {
+                    _deleteTask(task);
+                  },
                   child: ListTile(
-                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                     leading: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // 중요도 (A/B)
                         _buildBox(
-                          text: task.group,
-                          color: task.group == 'A' ? Colors.indigo : Colors.blueGrey,
-                          onTap: () => _toggleGroup(task),
+                            text: task.group,
+                            color: task.group == 'A' ? Colors.indigo : Colors.grey,
+                            onTap: () => _toggleGroup(task)
                         ),
                         SizedBox(width: 5),
-                        // 순위 (1, 2, 3...)
                         _buildBox(
-                          text: '${task.order}',
-                          color: Colors.white,
-                          textColor: Colors.black,
-                          hasBorder: true,
-                          onTap: () => _incrementOrder(task),
+                            text: '${task.order}',
+                            color: Colors.white,
+                            textColor: Colors.black,
+                            hasBorder: true,
+                            onTap: () => _incrementOrder(task)
                         ),
                       ],
                     ),
                     title: Text(
-                      task.title,
-                      style: TextStyle(
-                        // fontWeight: task.order == 1 ? FontWeight.bold : FontWeight.normal, // 1등은 굵게 표시
-                        decoration: task.isCompleted ? TextDecoration.lineThrough : null,
-                        color: task.isCompleted ? Colors.grey : Colors.black,
-                      ),
+                        task.title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.normal,
+                          decoration: task.isCompleted ? TextDecoration.lineThrough : null,
+                          color: task.isCompleted ? Colors.grey : Colors.black,
+                        )
                     ),
                     trailing: Checkbox(
                       value: task.isCompleted,
-                      onChanged: (val) => setState(() => task.isCompleted = val!),
+                      onChanged: (val) async {
+                        task.isCompleted = val!;
+                        await _dbHelper.updateTodo(task);
+                        _refreshTasks();
+                      },
                     ),
                   ),
                 );
@@ -184,10 +297,23 @@ class _PlannerAppState extends State<PlannerApp> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddDialog,
-        child: Icon(Icons.add),
-        backgroundColor: Colors.indigo,
+      floatingActionButton: FloatingActionButton(onPressed: _showAddDialog, child: Icon(Icons.add), backgroundColor: Colors.indigo),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      color: Colors.grey[100],
+      child: Row(
+        children: [
+          SizedBox(width: 38, child: Center(child: Text('중요도', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)))),
+          SizedBox(width: 5),
+          SizedBox(width: 38, child: Center(child: Text('순위', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)))),
+          SizedBox(width: 15),
+          Expanded(child: Text('할일', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+          SizedBox(width: 40, child: Center(child: Text('체크', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)))),
+        ],
       ),
     );
   }
@@ -198,11 +324,7 @@ class _PlannerAppState extends State<PlannerApp> {
       child: Container(
         width: 38, height: 38,
         alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(6),
-          border: hasBorder ? Border.all(color: Colors.black26) : null,
-        ),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6), border: hasBorder ? Border.all(color: Colors.black26) : null),
         child: Text(text, style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 16)),
       ),
     );
