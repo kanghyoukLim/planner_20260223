@@ -388,6 +388,21 @@ class _PlannerAppState extends State<PlannerApp> {
         backgroundColor: Colors.indigo,
         child: const Icon(Icons.add),
       ),
+      // Scaffold 내부의 속성으로 추가
+      bottomNavigationBar: Container(
+        height: 40,
+        alignment: Alignment.center,
+        color: Colors.white,
+        child: Text(
+          'Simplock 플래너',
+          style: TextStyle(
+            color: Colors.deepOrange[400], // 너무 튀지 않게 연한 회색으로 설정
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.2, // 글자 간격을 약간 넓혀 세련되게 표현
+          ),
+        ),
+      ),
     );
   }
 
