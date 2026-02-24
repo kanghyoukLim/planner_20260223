@@ -141,24 +141,35 @@ class _PlannerAppState extends State<PlannerApp> {
     // 1. 그룹 변수 변경
     task.group = targetGroup;
 
-    // 2. 나가는 그룹(oldGroup) 순서 재정렬 (빈자리 메우기)
-    List<Todo> oldGroupItems = myTasks.where((t) => t.group == oldGroup && t.id != task.id).toList();
+    // 2. 나가는 그룹(oldGroup) 순서 재정렬 (중간에 빈 번호가 생기므로 메워줘야 함)
+    List<Todo> oldGroupItems = myTasks
+        .where((t) => t.group == oldGroup && t.id != task.id)
+        .toList();
+    // 기존 순서(order)대로 정렬한 뒤 번호를 1번부터 다시 부여
+    oldGroupItems.sort((a, b) => a.order.compareTo(b.order));
     for (int i = 0; i < oldGroupItems.length; i++) {
       oldGroupItems[i].order = i + 1;
       await _dbHelper.updateTodo(oldGroupItems[i]);
     }
 
-    // 3. 들어가는 그룹(targetGroup) 순서 재정렬 (마지막에 추가)
-    List<Todo> newGroupItems = myTasks.where((t) => t.group == targetGroup).toList();
-    for (int i = 0; i < newGroupItems.length; i++) {
-      newGroupItems[i].order = i + 1;
-      await _dbHelper.updateTodo(newGroupItems[i]);
+    // 3. 들어가는 그룹(targetGroup) 순서 결정
+    // 새 그룹에 있는 항목 중 가장 높은 번호를 찾음
+    List<Todo> targetGroupItems = myTasks
+        .where((t) => t.group == targetGroup && t.id != task.id)
+        .toList();
+
+    int maxOrder = 0;
+    for (var t in targetGroupItems) {
+      if (t.order > maxOrder) maxOrder = t.order;
     }
 
-    // 4. 모든 변경사항 반영 후 화면 갱신
+    // 옮겨온 항목은 해당 그룹의 가장 마지막 번호를 부여
+    task.order = maxOrder + 1;
+    await _dbHelper.updateTodo(task);
+
+    // 4. 화면 갱신
     _refreshTasks();
   }
-
 
   // [추가] 새 일정 등록
   void _showAddDialog() {
