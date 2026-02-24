@@ -63,6 +63,37 @@ class DBHelper {
     await db.update('todos', todo.toMap(), where: 'id = ?', whereArgs: [todo.id]);
   }
 
+  // db_helper.dart에 추가
+  Future<Map<String, int>> getMonthlyScores(DateTime month) async {
+    final db = await database;
+    // 해당 월의 시작일과 종료일 계산
+    String start = DateTime(month.year, month.month, 1).toIso8601String().split('T')[0];
+    String end = DateTime(month.year, month.month + 1, 0).toIso8601String().split('T')[0];
+
+    final List<Map<String, dynamic>> maps = await db.query(
+      'todos',
+      where: "date >= ? AND date <= ?",
+      whereArgs: [start, end],
+    );
+
+    // 날짜별로 그룹화
+    Map<String, List<Map<String, dynamic>>> grouped = {};
+    for (var item in maps) {
+      String dateKey = item['date'].split('T')[0];
+      grouped.putIfAbsent(dateKey, () => []).add(item);
+    }
+
+    Map<String, int> scores = {};
+    grouped.forEach((date, tasks) {
+      var aTasks = tasks.where((t) => t['groupName'] == 'A').toList();
+      if (aTasks.isNotEmpty) {
+        var completed = aTasks.where((t) => t['isCompleted'] == 1).length;
+        scores[date] = ((completed / aTasks.length) * 100).toInt();
+      }
+    });
+    return scores;
+  }
+
   // 데이터 삭제
   Future<void> deleteTodo(String id) async {
     final db = await database;
